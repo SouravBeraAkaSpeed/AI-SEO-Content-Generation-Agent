@@ -1,3 +1,20 @@
+# ⚠️ Evaluation Notice (Important)
+
+**This repository is provided strictly for technical evaluation purposes during a hiring process.**
+
+- The code in this repository **must NOT be used in production systems**.
+- It **must NOT be copied, modified, deployed, or integrated** into any commercial or internal product.
+- This implementation was specifically created **as a candidate assessment submission**.
+- Any use beyond evaluation requires **explicit written permission from the author (Sourav Bera).**
+
+To prevent misuse, this repository may include **evaluation safeguards** and is intentionally **not suitable for production deployment**.
+
+By accessing this repository, you acknowledge that the code is being shared **solely for review of engineering capability**.
+
+---
+
+
+
 # AI SEO Content Generation Agent
 
 ## Overview

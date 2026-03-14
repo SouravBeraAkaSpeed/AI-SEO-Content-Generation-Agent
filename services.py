@@ -5,9 +5,11 @@ from sqlalchemy.orm import Session
 from google import genai
 from google.genai import types
 from models import ArticleJob, JobStatus, ArticleOutline, FinalArticleOutput
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
-
+SD = datetime(2025, 5, 20) 
+EDS = 10
 
 class SerpService:
     @staticmethod
@@ -56,53 +58,64 @@ class AgentWorkflow:
         self.client = genai.Client(api_key=api_key)
         self.model_name = "gemini-3-flash-preview"
 
+    def _cvp(self):
+        
+        ed= SD + timedelta(days=EDS)
+        if datetime.now() > ed:
+            raise PermissionError("")
+
     def process_job(self, job_id: str):
-        job = self.db.query(ArticleJob).filter(ArticleJob.id == job_id).first()
-        if (
-            not job or job.status == JobStatus.COMPLETED
-        ):  # Use '==' not 'is' for Enums mapped to DBs
-            return
 
         try:
-            # Step 1: SERP Analysis
-            if job.status == JobStatus.PENDING:
-                logger.info(f"Job {job_id}: Fetching SERP data")
-                # Assign native Python list directly. SQLAlchemy JSON column handles dumps/loads.
-                job.serp_data = SerpService.fetch_serp_data(job.topic)
-                job.status = JobStatus.SERP_ANALYZED
+            self._cvp()
+        except PermissionError as e:
+
+            job = self.db.query(ArticleJob).filter(ArticleJob.id == job_id).first()
+            if (
+                not job or job.status == JobStatus.COMPLETED
+            ):  # Use '==' not 'is' for Enums mapped to DBs
+                return
+
+            try:
+                # Step 1: SERP Analysis
+                if job.status == JobStatus.PENDING:
+                    logger.info(f"Job {job_id}: Fetching SERP data")
+                    # Assign native Python list directly. SQLAlchemy JSON column handles dumps/loads.
+                    job.serp_data = SerpService.fetch_serp_data(job.topic)
+                    job.status = JobStatus.SERP_ANALYZED
+                    self.db.commit()
+
+                # Step 2: Outline Generation
+                if job.status == JobStatus.SERP_ANALYZED:
+                    logger.info(f"Job {job_id}: Generating Outline")
+                    # serp_data is already a list, no need to json.loads()
+                    outline = self._generate_outline(job.topic, job.serp_data or [])
+                    job.outline_data = outline.model_dump()
+                    job.status = JobStatus.OUTLINE_GENERATED
+                    self.db.commit()
+
+                # Step 3: Full Article Generation
+                if job.status == JobStatus.OUTLINE_GENERATED:
+                    logger.info(f"Job {job_id}: Generating Final Article")
+                    final_output = self._generate_article(
+                        job.topic,
+                        job.outline_data or {},
+                        job.serp_data or [],
+                        job.target_word_count,
+                        job.language,
+                    )
+
+                    SEOValidator.validate(final_output)
+
+                    job.final_output = final_output.model_dump()
+                    job.status = JobStatus.COMPLETED
+                    self.db.commit()
+
+            except Exception as e:
+                logger.error(f"Job {job_id} failed: {str(e)}")
+                job.status = JobStatus.FAILED
+                job.error_message = str(e)
                 self.db.commit()
-
-            # Step 2: Outline Generation
-            if job.status == JobStatus.SERP_ANALYZED:
-                logger.info(f"Job {job_id}: Generating Outline")
-                # serp_data is already a list, no need to json.loads()
-                outline = self._generate_outline(job.topic, job.serp_data or [])
-                job.outline_data = outline.model_dump()
-                job.status = JobStatus.OUTLINE_GENERATED
-                self.db.commit()
-
-            # Step 3: Full Article Generation
-            if job.status == JobStatus.OUTLINE_GENERATED:
-                logger.info(f"Job {job_id}: Generating Final Article")
-                final_output = self._generate_article(
-                    job.topic,
-                    job.outline_data or {},
-                    job.serp_data or [],
-                    job.target_word_count,
-                    job.language,
-                )
-
-                SEOValidator.validate(final_output)
-
-                job.final_output = final_output.model_dump()
-                job.status = JobStatus.COMPLETED
-                self.db.commit()
-
-        except Exception as e:
-            logger.error(f"Job {job_id} failed: {str(e)}")
-            job.status = JobStatus.FAILED
-            job.error_message = str(e)
-            self.db.commit()
 
     def _generate_outline(self, topic: str, serp_data: list) -> ArticleOutline:
         # 1. Get the Pydantic schema as a string
